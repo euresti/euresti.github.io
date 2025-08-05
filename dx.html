@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DX Film Edge Barcode Decoder</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      margin-top: 40px;
+      background: #f5f5f5;
+    }
+    .row {
+      display: flex;
+      justify-content: center;
+      margin: 0;
+      gap: 0;
+    }
+    .cell {
+      width: 20px;
+      height: 40px;
+      margin: 0;
+      padding: 0;
+      border: none;
+    }
+    .black { background-color: black; }
+    .white { background-color: white; }
+    .optional { opacity: 0.6; }
+    .clickable { cursor: pointer; }
+    #output {
+      margin-top: 20px;
+      font-family: monospace;
+      white-space: pre-wrap;
+      background: #fff;
+      display: inline-block;
+      padding: 10px;
+      border: 1px solid #ccc;
+    }
+    button {
+      margin: 5px;
+    }
+    a {
+      display: block;
+      margin-top: 10px;
+      color: blue;
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>DX Film Edge Barcode Decoder</h2>
+  <p>Top row: sync pattern (non-editable) &nbsp;|&nbsp; Bottom row: Click to toggle</p>
+
+  <div class="row" id="top-row"></div>
+  <div class="row" id="barcode-row"></div>
+  <button onclick="submitBarcode()">Decode DX</button>
+  <button onclick="resetBarcode()">Reset</button>
+
+  <div id="output"></div>
+
+  <script>
+    const bitCount = 31;
+    const topRow = document.getElementById('top-row');
+    const barcodeRow = document.getElementById('barcode-row');
+    const outputDiv = document.getElementById('output');
+    const optionalBits = [18,19,20,21,22,23,24]; // frame number + half-frame
+    const cells = [];
+
+    // Build top row: 11111 at start, alternating middle, 111 at end
+    for (let i = 0; i < bitCount; i++) {
+      const box = document.createElement('div');
+      let black;
+      if (i < 5 || i >= bitCount - 3) {
+        black = true;
+      } else {
+        black = (i % 2 === 0);
+      }
+      box.className = 'cell ' + (black ? 'black' : 'white');
+      topRow.appendChild(box);
+    }
+
+    // Create clickable data row with locked bits for 10101 at start and 101 at end
+    const lockedBits = {
+      0: 1, 1: 0, 2: 1, 3: 0, 4: 1,       // start: 10101
+      28: 1, 29: 0, 30: 1                 // end: 101
+    };
+
+    for (let i = 0; i < bitCount; i++) {
+      const cell = document.createElement('div');
+      const isLocked = i in lockedBits;
+
+      const bitValue = isLocked ? lockedBits[i] : 0;
+      cell.className = 'cell ' + (bitValue === 1 ? 'black' : 'white');
+
+      if (isLocked) {
+        cell.style.opacity = '0.7';
+        cell.style.cursor = 'default';
+      } else {
+        cell.classList.add('clickable');
+        if (optionalBits.includes(i)) {
+          cell.classList.add('optional');
+        }
+        cell.onclick = () => {
+          cell.classList.toggle('black');
+          cell.classList.toggle('white');
+        };
+      }
+
+      barcodeRow.appendChild(cell);
+      cells.push(cell);
+    }
+
+    function submitBarcode() {
+      const bits = cells.map(c => c.classList.contains('black') ? 1 : 0);
+      let output = '';
+
+      // Entry code
+      const entry = bits.slice(0, 6).join('');
+      output += `Entry Code: ${entry} ${entry === '101010' ? '✅' : '❌ (should be 101010)'}\n`;
+
+      // DX Number Part 1
+      const dx1bits = bits.slice(6, 13);
+      const dx1 = parseInt(dx1bits.join(''), 2);
+      output += `DX Number Part 1 (Product Class): ${dx1} [${dx1bits.join('')}]\n`;
+
+      // DX Number Part 2
+      const dx2bits = bits.slice(14, 18);
+      const dx2 = parseInt(dx2bits.join(''), 2);
+      output += `DX Number Part 2 (Specifier): ${dx2} [${dx2bits.join('')}]\n`;
+
+      // Calculate DX Code
+      const dxCodeNum = (dx1 * 16 + dx2) * 10 + 3;
+      const dxCodeStr = dxCodeNum.toString().padStart(6, '0');
+      output += `\nCalculated DX Code: ${dxCodeStr}\n`;
+      output += `🔗 Lookup: https://industrieplus.alwaysdata.net/dxdatabase/rech.php?dx=${dxCodeStr}\n`;
+
+      // Frame Number (optional)
+      const frameBits = bits.slice(18, 24);
+      const frame = parseInt(frameBits.join(''), 2);
+      if (frame !== 0) {
+        output += `Frame Number: ${frame} [${frameBits.join('')}]\n`;
+      }
+
+      // Half-frame bit (optional)
+      const halfFrame = bits[24];
+      if (halfFrame === 1) {
+        output += `Half-frame: Yes\n`;
+      }
+
+      // Parity
+      const parityBit = bits[26];
+      const dataBits = bits.slice(6, 26); // bits 6–25
+      const expectedParity = dataBits.reduce((a, b) => a + b, 0) % 2 === 1 ? 1 : 0;
+      output += `Parity Bit: ${parityBit} (Expected: ${expectedParity}) ${parityBit === expectedParity ? '✅' : '❌'}\n`;
+
+      // Exit code
+      const exitCode = bits.slice(27, 31).join('');
+      output += `Exit Code: ${exitCode} ${exitCode === '0101' ? '✅' : '❌ (should be 0101)'}\n`;
+
+      // Display output
+      outputDiv.innerText = output;
+
+      // Add hyperlink below
+      const existingLink = document.getElementById('dx-link');
+      if (existingLink) existingLink.remove();
+      const link = document.createElement('a');
+      link.href = `https://industrieplus.alwaysdata.net/dxdatabase/rech.php?dx=${dxCodeStr}`;
+      link.target = '_blank';
+      link.id = 'dx-link';
+      link.textContent = `View DX Code ${dxCodeStr} in Database →`;
+      outputDiv.appendChild(link);
+    }
+
+    function resetBarcode() {
+      for (let i = 0; i < bitCount; i++) {
+        if (!(i in lockedBits)) {
+          cells[i].classList.remove('black');
+          cells[i].classList.add('white');
+        }
+      }
+      outputDiv.innerHTML = '';
+    }
+  </script>
+
+</body>
+</html>
